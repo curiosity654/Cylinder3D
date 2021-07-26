@@ -9,19 +9,24 @@ import argparse
 import sys
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import tqdm
+from utils import seesaw_loss
 
 from utils.metric_util import per_class_iu, fast_hist_crop
 from dataloader.pc_dataset import get_SemKITTI_label_name
 from builder import data_builder, model_builder, loss_builder
 from config.config import load_config_data
+from utils.seesaw_loss  import SeesawLoss
 
 from utils.load_save_util import load_checkpoint
 
 import warnings
 
 warnings.filterwarnings("ignore")
+
+import wandb
 
 
 def main(args):
@@ -62,6 +67,8 @@ def main(args):
     loss_func, lovasz_softmax = loss_builder.build(wce=True, lovasz=True,
                                                    num_class=num_class, ignore_label=ignore_label)
 
+    seesaw_loss = SeesawLoss(num_classes=20)
+
     train_dataset_loader, val_dataset_loader = data_builder.build(dataset_config,
                                                                   train_dataloader_config,
                                                                   val_dataloader_config,
@@ -73,20 +80,21 @@ def main(args):
     my_model.train()
     global_iter = 0
     check_iter = train_hypers['eval_every_n_steps']
+    log_iter = 50
 
     while epoch < train_hypers['max_num_epochs']:
         loss_list = []
         pbar = tqdm(total=len(train_dataset_loader))
         time.sleep(10)
         # lr_scheduler.step(epoch)
-        for i_iter, (_, train_vox_label, train_grid, _, train_pt_fea) in enumerate(train_dataset_loader):
-            if global_iter % check_iter == 0 and epoch >= 1:
+        for i_iter, (_, train_vox_label, train_grid, point_label, train_pt_fea) in enumerate(train_dataset_loader):
+            if global_iter % check_iter == 0:
                 my_model.eval()
                 hist_list = []
                 val_loss_list = []
                 with torch.no_grad():
-                    for i_iter_val, (_, val_vox_label, val_grid, val_pt_labs, val_pt_fea) in enumerate(
-                            val_dataset_loader):
+                    for i_iter_val, (_, val_vox_label, val_grid, val_pt_labs, val_pt_fea) in tqdm(enumerate(
+                            val_dataset_loader), total=len(val_dataset_loader)):
 
                         val_pt_fea_ten = [torch.from_numpy(i).type(torch.FloatTensor).to(pytorch_device) for i in
                                           val_pt_fea]
@@ -109,8 +117,10 @@ def main(args):
                 iou = per_class_iu(sum(hist_list))
                 print('Validation per class iou: ')
                 for class_name, class_iou in zip(unique_label_str, iou):
+                    wandb.log({"val/{}".format(class_name): class_iou}, step=global_iter)
                     print('%s : %.2f%%' % (class_name, class_iou * 100))
                 val_miou = np.nanmean(iou) * 100
+                wandb.log({"val/miou": val_miou}, step=global_iter)
                 del val_vox_label, val_grid, val_pt_fea, val_grid_ten
 
                 # save model if performance is improved
@@ -130,34 +140,48 @@ def main(args):
 
             # forward + backward + optimize
             outputs = my_model(train_pt_fea_ten, train_vox_ten, train_batch_size)
-            loss = lovasz_softmax(torch.nn.functional.softmax(outputs), point_label_tensor, ignore=0) + loss_func(
-                outputs, point_label_tensor)
+            # prediction = torch.argmax(F.softmax(outputs, dim=1), dim=1)
+            dense_predictions = []
+            for i in range(len(point_label)):
+                _outputs = outputs[i].permute(1,2,3,0)
+                dense_prediction = _outputs[train_grid[i][:, 0], train_grid[i][:, 1], train_grid[i][:, 2]]
+                dense_predictions.append(dense_prediction)
+            dense_predictions = torch.cat(dense_predictions)
+            point_label = torch.from_numpy(np.concatenate(point_label)).type(torch.LongTensor).to(pytorch_device).squeeze()
+
+            loss = F.cross_entropy(dense_predictions, point_label, ignore_index=0)
+            # loss = seesaw_loss(dense_predictions, point_label)
+            # loss = lovasz_softmax(torch.nn.functional.softmax(outputs), point_label_tensor, ignore=0) + loss_func(
+            #     outputs, point_label_tensor)
+            
             loss.backward()
             optimizer.step()
             loss_list.append(loss.item())
 
-            if global_iter % 1000 == 0:
-                if len(loss_list) > 0:
-                    print('epoch %d iter %5d, loss: %.3f\n' %
-                          (epoch, i_iter, np.mean(loss_list)))
-                else:
-                    print('loss error')
-
             optimizer.zero_grad()
             pbar.update(1)
             global_iter += 1
-            if global_iter % check_iter == 0:
+            if global_iter % log_iter == 0:
                 if len(loss_list) > 0:
-                    print('epoch %d iter %5d, loss: %.3f\n' %
+                    print('epoch %d iter %5d, loss: %.3f' %
                           (epoch, i_iter, np.mean(loss_list)))
+                    wandb.log({"train/loss": np.mean(loss_list)}, step=global_iter)
                 else:
                     print('loss error')
         pbar.close()
+
+        if len(loss_list) > 0:
+            print('epoch %d iter %5d, loss: %.3f\n' %
+                    (epoch, i_iter, np.mean(loss_list)))
+        else:
+            print('loss error')
+
         epoch += 1
 
 
 if __name__ == '__main__':
     # Training settings
+    wandb.init(project="Cylinder3D")
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('-y', '--config_path', default='config/semantickitti.yaml')
     args = parser.parse_args()

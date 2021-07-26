@@ -28,6 +28,7 @@ dataset_params = Map(
         "label_mapping": Str(),
         "max_volume_space": Seq(Float()),
         "min_volume_space": Seq(Float()),
+        "load_interval": Int()
     }
 )
 

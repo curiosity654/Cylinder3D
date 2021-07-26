@@ -18,6 +18,7 @@ def build(dataset_config,
     val_ref = val_dataloader_config["return_ref"]
 
     label_mapping = dataset_config["label_mapping"]
+    load_interval = dataset_config['load_interval']
 
     SemKITTI = get_pc_model_class(dataset_config['pc_dataset_type'])
 
@@ -27,9 +28,9 @@ def build(dataset_config,
         nusc = NuScenes(version='v1.0-trainval', dataroot=data_path, verbose=True)
 
     train_pt_dataset = SemKITTI(data_path, imageset=train_imageset,
-                                return_ref=train_ref, label_mapping=label_mapping, nusc=nusc)
+                                return_ref=train_ref, label_mapping=label_mapping, nusc=nusc, load_interval=load_interval)
     val_pt_dataset = SemKITTI(data_path, imageset=val_imageset,
-                              return_ref=val_ref, label_mapping=label_mapping, nusc=nusc)
+                              return_ref=val_ref, label_mapping=label_mapping, nusc=nusc, load_interval=load_interval)
 
     train_dataset = get_model_class(dataset_config['dataset_type'])(
         train_pt_dataset,

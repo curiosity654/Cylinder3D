@@ -63,7 +63,8 @@ class SemKITTI_demo(data.Dataset):
 @register_dataset
 class SemKITTI_sk(data.Dataset):
     def __init__(self, data_path, imageset='train',
-                 return_ref=False, label_mapping="semantic-kitti.yaml", nusc=None):
+                 return_ref=False, label_mapping="semantic-kitti.yaml", nusc=None,
+                 load_interval=1):
         self.return_ref = return_ref
         with open(label_mapping, 'r') as stream:
             semkittiyaml = yaml.safe_load(stream)
@@ -81,6 +82,8 @@ class SemKITTI_sk(data.Dataset):
         self.im_idx = []
         for i_folder in split:
             self.im_idx += absoluteFilePaths('/'.join([data_path, str(i_folder).zfill(2), 'velodyne']))
+        
+        self.im_idx = self.im_idx[::load_interval]
 
     def __len__(self):
         'Denotes the total number of samples'
