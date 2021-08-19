@@ -45,7 +45,7 @@ train_data_loader:
   data_path: "/root/code/Cylinder3D/data/semkitti/dataset/sequences/"
   imageset: "train"
   return_ref: True
-  batch_size: 2
+  batch_size: 16
   shuffle: True
   num_workers: 4
 

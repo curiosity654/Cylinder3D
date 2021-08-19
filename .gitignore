@@ -10,3 +10,5 @@ data
 *__pycache__*
 model_load_dir
 model_save_dir
+visualization
+playground

@@ -158,15 +158,17 @@ def main(args):
                 dense_predictions.append(dense_prediction)
             dense_predictions = torch.cat(dense_predictions)
             point_label = torch.from_numpy(np.concatenate(point_label)).type(torch.LongTensor).to(pytorch_device).squeeze()
-
-            # loss_ce = F.cross_entropy(dense_predictions, point_label, ignore_index=0)
-            loss_seesaw, cum_samples, mitigation_factor, compensation_factor, seesaw_weights = seesaw_loss(dense_predictions, point_label)
+            # ignore motorcyclist and other-ground
+            point_label[point_label==12] = 0
+            point_label[point_label==8] = 0
+            loss_ce = F.cross_entropy(dense_predictions, point_label, ignore_index=0)
+            # loss_seesaw, cum_samples, mitigation_factor, compensation_factor, seesaw_weights = seesaw_loss(dense_predictions, point_label)
             loss_lovasz = lovasz_softmax(torch.nn.functional.softmax(outputs), point_label_tensor, ignore=0)
             # loss = lovasz_softmax(torch.nn.functional.softmax(outputs), point_label_tensor, ignore=0) + loss_func(
             #     outputs, point_label_tensor)
             
-            loss = loss_seesaw + loss_lovasz
-            # loss = loss_ce + loss_lovasz
+            # loss = loss_seesaw + loss_lovasz
+            loss = loss_ce + loss_lovasz
             
             loss.backward()
             optimizer.step()
@@ -182,11 +184,11 @@ def main(args):
                     #       (epoch, i_iter, np.mean(loss_list)))
                     wandb.log({"train/loss": np.mean(loss_list)}, step=global_iter)
                 
-                    df = pd.DataFrame(mitigation_factor.numpy())
-                    plt.figure()
-                    sns.heatmap(df, xticklabels=all_legend, yticklabels=all_legend, annot=True, annot_kws={"size":4})
-                    M = wandb.Image(plt, caption="mitigation_factor{}".format(global_iter))
-                    wandb.log({"train/M": M}, step=global_iter)
+                    # df = pd.DataFrame(mitigation_factor.numpy())
+                    # plt.figure()
+                    # sns.heatmap(df, xticklabels=all_legend, yticklabels=all_legend, annot=True, annot_kws={"size":4})
+                    # M = wandb.Image(plt, caption="mitigation_factor{}".format(global_iter))
+                    # wandb.log({"train/M": M}, step=global_iter)
                 
                 else:
                     print('loss error')
@@ -206,7 +208,7 @@ if __name__ == '__main__':
     # Training settings
     wandb.init(project="Cylinder3D")
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('-y', '--config_path', default='config/semantickitti.yaml')
+    parser.add_argument('-y', '--config_path', default='config/semantickitti_seesaw_fintune.yaml')
     args = parser.parse_args()
 
     print(' '.join(sys.argv))

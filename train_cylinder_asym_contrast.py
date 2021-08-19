@@ -12,13 +12,12 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import tqdm
-from utils import seesaw_loss
+from utils import contrast_loss, lovasz_losses
 
 from utils.metric_util import per_class_iu, fast_hist_crop
 from dataloader.pc_dataset import get_SemKITTI_label_name
 from builder import data_builder, model_builder, loss_builder
 from config.config import load_config_data
-from utils.seesaw_loss  import SeesawLoss
 
 from utils.load_save_util import load_checkpoint
 from utils.visualization import show
@@ -31,6 +30,7 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import wandb
+from utils.contrast_loss import PixelContrastLoss, PixelContrastLossOrg
 
 
 def main(args):
@@ -74,8 +74,8 @@ def main(args):
 
     loss_func, lovasz_softmax = loss_builder.build(wce=True, lovasz=True,
                                                    num_class=num_class, ignore_label=ignore_label)
-
-    seesaw_loss = SeesawLoss(num_classes=20, p=3, q=-1)
+    # contrast_loss = PixelContrastLoss()
+    contrast_loss_org = PixelContrastLossOrg()
 
     train_dataset_loader, val_dataset_loader = data_builder.build(dataset_config,
                                                                   train_dataloader_config,
@@ -92,6 +92,9 @@ def main(args):
 
     while epoch < train_hypers['max_num_epochs']:
         loss_list = []
+        lovasz_loss_list = []
+        contrast_loss_list = []
+        ce_loss_list = []        
         pbar = tqdm(total=len(train_dataset_loader))
         time.sleep(10)
         # lr_scheduler.step(epoch)
@@ -110,7 +113,7 @@ def main(args):
                         val_label_tensor = val_vox_label.type(torch.LongTensor).to(pytorch_device)
 
                         predict_labels = my_model(val_pt_fea_ten, val_grid_ten, val_batch_size)
-                        # aux_loss = loss_fun(aux_outputs, point_label_tensor)
+
                         loss = lovasz_softmax(torch.nn.functional.softmax(predict_labels).detach(), val_label_tensor,
                                               ignore=0) + loss_func(predict_labels.detach(), val_label_tensor)
                         predict_labels = torch.argmax(predict_labels, dim=1)
@@ -149,9 +152,9 @@ def main(args):
             point_label_tensor = train_vox_label.type(torch.LongTensor).to(pytorch_device)
 
             # forward + backward + optimize
-            outputs = my_model(train_pt_fea_ten, train_vox_ten, train_batch_size)
-            # prediction = torch.argmax(F.softmax(outputs, dim=1), dim=1)
+            outputs, features, coords = my_model(train_pt_fea_ten, train_vox_ten, train_batch_size, with_feature=True, with_coords=True)
             dense_predictions = []
+            vox_predictions = torch.argmax(outputs.permute(0,2,3,4,1)[coords[:,0], coords[:,1], coords[:,2], coords[:,3]], dim=1)
             for i in range(len(point_label)):
                 _outputs = outputs[i].permute(1,2,3,0)
                 dense_prediction = _outputs[train_grid[i][:, 0], train_grid[i][:, 1], train_grid[i][:, 2]]
@@ -159,17 +162,21 @@ def main(args):
             dense_predictions = torch.cat(dense_predictions)
             point_label = torch.from_numpy(np.concatenate(point_label)).type(torch.LongTensor).to(pytorch_device).squeeze()
 
-            # loss_ce = F.cross_entropy(dense_predictions, point_label, ignore_index=0)
-            loss_seesaw, cum_samples, mitigation_factor, compensation_factor, seesaw_weights = seesaw_loss(dense_predictions, point_label)
+            loss_ce = F.cross_entropy(dense_predictions, point_label, ignore_index=0)
             loss_lovasz = lovasz_softmax(torch.nn.functional.softmax(outputs), point_label_tensor, ignore=0)
+            
+            # loss_contrast = contrast_loss(features, point_label_tensor[coords[:,0], coords[:,1], coords[:,2], coords[:,3]])
+            loss_contrast = contrast_loss_org(feats=features.unsqueeze(0), labels=point_label_tensor[coords[:,0], coords[:,1], coords[:,2], coords[:,3]].unsqueeze(0), predict=vox_predictions.unsqueeze(0))
             # loss = lovasz_softmax(torch.nn.functional.softmax(outputs), point_label_tensor, ignore=0) + loss_func(
             #     outputs, point_label_tensor)
             
-            loss = loss_seesaw + loss_lovasz
-            # loss = loss_ce + loss_lovasz
+            loss = loss_ce + loss_lovasz + 0.1 * loss_contrast
             
             loss.backward()
             optimizer.step()
+            contrast_loss_list.append(loss_contrast.item())
+            lovasz_loss_list.append(loss_lovasz.item())
+            ce_loss_list.append(loss_ce.item())
             loss_list.append(loss.item())
 
             optimizer.zero_grad()
@@ -180,25 +187,15 @@ def main(args):
                 if len(loss_list) > 0:
                     # print('epoch %d iter %5d, loss: %.3f' %
                     #       (epoch, i_iter, np.mean(loss_list)))
+                    wandb.log({"train/ce_loss": np.mean(ce_loss_list)}, step=global_iter)
+                    wandb.log({"train/lovasz_loss": np.mean(lovasz_loss_list)}, step=global_iter)
+                    wandb.log({"train/contrast_loss": 0.1 * np.mean(contrast_loss_list)}, step=global_iter)
                     wandb.log({"train/loss": np.mean(loss_list)}, step=global_iter)
-                
-                    df = pd.DataFrame(mitigation_factor.numpy())
-                    plt.figure()
-                    sns.heatmap(df, xticklabels=all_legend, yticklabels=all_legend, annot=True, annot_kws={"size":4})
-                    M = wandb.Image(plt, caption="mitigation_factor{}".format(global_iter))
-                    wandb.log({"train/M": M}, step=global_iter)
                 
                 else:
                     print('loss error')
 
         pbar.close()
-
-        # if len(loss_list) > 0:
-        #     print('epoch %d iter %5d, loss: %.3f\n' %
-        #             (epoch, i_iter, np.mean(loss_list)))
-        # else:
-        #     print('loss error')
-
         epoch += 1
 
 
@@ -206,7 +203,7 @@ if __name__ == '__main__':
     # Training settings
     wandb.init(project="Cylinder3D")
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('-y', '--config_path', default='config/semantickitti.yaml')
+    parser.add_argument('-y', '--config_path', default='config/semantickitti_contrast.yaml')
     args = parser.parse_args()
 
     print(' '.join(sys.argv))

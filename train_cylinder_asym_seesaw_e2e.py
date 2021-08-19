@@ -75,7 +75,7 @@ def main(args):
     loss_func, lovasz_softmax = loss_builder.build(wce=True, lovasz=True,
                                                    num_class=num_class, ignore_label=ignore_label)
 
-    seesaw_loss = SeesawLoss(num_classes=20, p=3, q=-1)
+    seesaw_loss = SeesawLoss(num_classes=20, q=-1)
 
     train_dataset_loader, val_dataset_loader = data_builder.build(dataset_config,
                                                                   train_dataloader_config,
@@ -92,6 +92,8 @@ def main(args):
 
     while epoch < train_hypers['max_num_epochs']:
         loss_list = []
+        loss_seesaw_list = []
+        loss_lovasz_list = []
         pbar = tqdm(total=len(train_dataset_loader))
         time.sleep(10)
         # lr_scheduler.step(epoch)
@@ -146,7 +148,7 @@ def main(args):
             train_pt_fea_ten = [torch.from_numpy(i).type(torch.FloatTensor).to(pytorch_device) for i in train_pt_fea]
             # train_grid_ten = [torch.from_numpy(i[:,:2]).to(pytorch_device) for i in train_grid]
             train_vox_ten = [torch.from_numpy(i).to(pytorch_device) for i in train_grid]
-            point_label_tensor = train_vox_label.type(torch.LongTensor).to(pytorch_device)
+            vox_label_tensor = train_vox_label.type(torch.LongTensor).to(pytorch_device)
 
             # forward + backward + optimize
             outputs = my_model(train_pt_fea_ten, train_vox_ten, train_batch_size)
@@ -161,7 +163,7 @@ def main(args):
 
             # loss_ce = F.cross_entropy(dense_predictions, point_label, ignore_index=0)
             loss_seesaw, cum_samples, mitigation_factor, compensation_factor, seesaw_weights = seesaw_loss(dense_predictions, point_label)
-            loss_lovasz = lovasz_softmax(torch.nn.functional.softmax(outputs), point_label_tensor, ignore=0)
+            loss_lovasz = lovasz_softmax(torch.nn.functional.softmax(outputs), vox_label_tensor, ignore=0)
             # loss = lovasz_softmax(torch.nn.functional.softmax(outputs), point_label_tensor, ignore=0) + loss_func(
             #     outputs, point_label_tensor)
             
@@ -171,6 +173,8 @@ def main(args):
             loss.backward()
             optimizer.step()
             loss_list.append(loss.item())
+            loss_seesaw_list.append(loss_seesaw.item())
+            loss_lovasz_list.append(loss_lovasz.item())
 
             optimizer.zero_grad()
             pbar.update(1)
@@ -178,9 +182,9 @@ def main(args):
             if global_iter % log_iter == 0:
 
                 if len(loss_list) > 0:
-                    # print('epoch %d iter %5d, loss: %.3f' %
-                    #       (epoch, i_iter, np.mean(loss_list)))
                     wandb.log({"train/loss": np.mean(loss_list)}, step=global_iter)
+                    wandb.log({"train/loss_seesaw": np.mean(loss_seesaw_list)}, step=global_iter)
+                    wandb.log({"train/loss_lovasz": np.mean(loss_lovasz_list)}, step=global_iter)
                 
                     df = pd.DataFrame(mitigation_factor.numpy())
                     plt.figure()
@@ -193,12 +197,6 @@ def main(args):
 
         pbar.close()
 
-        # if len(loss_list) > 0:
-        #     print('epoch %d iter %5d, loss: %.3f\n' %
-        #             (epoch, i_iter, np.mean(loss_list)))
-        # else:
-        #     print('loss error')
-
         epoch += 1
 
 
@@ -206,7 +204,7 @@ if __name__ == '__main__':
     # Training settings
     wandb.init(project="Cylinder3D")
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('-y', '--config_path', default='config/semantickitti.yaml')
+    parser.add_argument('-y', '--config_path', default='config/semantickitti_seesaw_e2e.yaml')
     args = parser.parse_args()
 
     print(' '.join(sys.argv))

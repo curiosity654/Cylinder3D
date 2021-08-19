@@ -36,7 +36,7 @@ dataset_params:
     - 0
     - -3.1415926
     - -4
-  load_interval: 2
+  load_interval: 10
 
 
 ###################
@@ -61,9 +61,9 @@ val_data_loader:
 ###################
 ## Train params
 train_params:
-  model_load_path: "./model_load_dir/model_load.pt"
-  model_save_path: "./model_save_dir/model_save.pt"
+  model_load_path: "./model_load_dir/epoch_39_iter_677_miou_57.612730549694334.pt"
+  model_save_path: "./model_save_dir/only"
   checkpoint_every_n_steps: 1000
   max_num_epochs: 40
-  eval_every_n_steps: 1000
+  eval_every_n_steps: 500
   learning_rate: 0.001

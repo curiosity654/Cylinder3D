@@ -304,4 +304,4 @@ class Asymm_3d_spconv(nn.Module):
 
         logits = self.logits(up0e)
         y = logits.dense()
-        return y
+        return y, up0e.features

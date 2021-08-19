@@ -21,6 +21,14 @@ def get_model_class(name):
     assert name in REGISTERED_MODELS_CLASSES, f"available class: {REGISTERED_MODELS_CLASSES}"
     return REGISTERED_MODELS_CLASSES[name]
 
+class projection_head(nn.Module):
+    def __init__(self, dim_in, proj_dim=64):
+        super(projection_head, self).__init__()
+
+        self.proj = nn.Linear(dim_in, proj_dim)
+    
+    def forward(self, x):
+        return nn.functional.normalize(self.proj(x), p=2, dim=1)
 
 @register_model
 class cylinder_asym(nn.Module):
@@ -38,9 +46,17 @@ class cylinder_asym(nn.Module):
 
         self.sparse_shape = sparse_shape
 
-    def forward(self, train_pt_fea_ten, train_vox_ten, batch_size):
+        self.proj = projection_head(128)
+
+    def forward(self, train_pt_fea_ten, train_vox_ten, batch_size, with_feature=False, with_coords=False):
         coords, features_3d = self.cylinder_3d_generator(train_pt_fea_ten, train_vox_ten)
 
-        spatial_features = self.cylinder_3d_spconv_seg(features_3d, coords, batch_size)
+        logits, features = self.cylinder_3d_spconv_seg(features_3d, coords, batch_size)
 
-        return spatial_features
+        if with_feature:
+            if with_coords:
+                return logits, self.proj(features), coords
+            else:
+                return logits, self.proj(features)
+        else:
+            return logits

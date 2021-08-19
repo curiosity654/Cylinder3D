@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .accuracy import accuracy
+from accuracy import accuracy
 
 def reduce_loss(loss, reduction):
     """Reduce loss as specified.
@@ -257,4 +257,4 @@ class SeesawLoss(nn.Module):
         
         loss_cls = self.loss_weight * loss_cls
 
-        return loss_cls, self.cum_samples, mitigation_factor, compensation_factor, seesaw_weights
+        return loss_cls
