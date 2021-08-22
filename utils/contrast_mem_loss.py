@@ -1,51 +1,37 @@
 import torch
 import torch.nn as nn
 
+class ContrastMemLoss(nn.Module):
+    def __init__(self, loss_weight=1):
+        super(ContrastMemLoss, self).__init__()
+        
+        self.loss_weight = loss_weight
+        self.contrast_criterion = PixelContrastLoss()
+
+    def forward(self, features, predicts, targets, queue):
+
+        if "segment_queue" in queue:
+            segment_queue = queue['segment_queue']
+        else:
+            segment_queue = None
+
+        if "pixel_queue" in queue:
+            pixel_queue = queue['pixel_queue']
+        else:
+            pixel_queue = None
+
+        if segment_queue is not None and pixel_queue is not None:
+            queue = torch.cat((segment_queue, pixel_queue), dim=1)
+
+            loss_contrast = self.contrast_criterion(features, targets, predicts, queue)
+        else:
+            loss_contrast = 0
+
+        return self.loss_weight * loss_contrast
+
 class PixelContrastLoss(nn.Module):
-    def __init__(self, ignore_label=0, max_samples=256):
-        super(PixelContrastLoss, self).__init__()
-
-        self.temperature = 0.07
-        self.base_temperature = 0.07
-        self.ignore_label = ignore_label
-        self.max_samples = max_samples
-
-    def sampling(self, feats, labels, predict=None):
-        # TODO hard anchor sampling
-        
-        # remove ignored class
-        filter = labels != self.ignore_label
-        feats = feats[filter]
-        labels = labels[filter]
-
-        # random sample
-        idx = torch.randperm(feats.shape[0])[:self.max_samples]
-        
-        return feats[idx], labels[idx]
-
-    def contrastive(self, feats, labels):
-
-        labels = labels.unsqueeze(0)
-        mask = torch.eq(labels, torch.transpose(labels, 0, 1)).float().cuda()
-        neg_mask = 1 - mask
-        feat_mult = torch.matmul(feats, torch.transpose(feats, 0, 1))
-        neg_sum = (torch.exp(feat_mult) * neg_mask).sum(1)
-        logits = torch.exp(feat_mult)/(torch.exp(feat_mult) + (neg_sum.repeat(feats.shape[0],1)))
-        log_prob = (torch.log(logits) * mask).sum(1)
-        loss = - log_prob
-        loss = loss.mean()
-
-        return loss
-
-    def forward(self, feats, labels=None, predict=None):
-
-        feats_, labels_ = self.sampling(feats, labels)
-        loss = self.contrastive(feats_, labels_)
-        return loss
-
-class PixelContrastLossOrg(nn.Module):
     def __init__(self, ignore_label=0, max_samples=1024):
-        super(PixelContrastLossOrg, self).__init__()
+        super(PixelContrastLoss, self).__init__()
 
         self.temperature = 0.07
         self.base_temperature = 0.07
@@ -53,7 +39,7 @@ class PixelContrastLossOrg(nn.Module):
         self.max_samples = max_samples
         self.max_views = 100
 
-    def hard_anchor_sampling(self, X, y_hat, y):
+    def _hard_anchor_sampling(self, X, y_hat, y):
         batch_size, feat_dim = X.shape[0], X.shape[-1]
 
         classes = []
@@ -113,19 +99,42 @@ class PixelContrastLossOrg(nn.Module):
 
         return X_, y_
 
-    def contrastive(self, feats_, labels_):
-        anchor_num, n_view = feats_.shape[0], feats_.shape[1]
+    def _sample_negative(self, Q):
+        class_num, cache_size, feat_size = Q.shape
 
-        labels_ = labels_.contiguous().view(-1, 1)
-        mask = torch.eq(labels_, torch.transpose(labels_, 0, 1)).float().cuda()
+        X_ = torch.zeros((class_num * cache_size, feat_size)).float().cuda()
+        y_ = torch.zeros((class_num * cache_size, 1)).float().cuda()
+        sample_ptr = 0
+        for ii in range(class_num):
+            if ii == 0: continue
+            this_q = Q[ii, :cache_size, :]
 
-        contrast_count = n_view
-        contrast_feature = torch.cat(torch.unbind(feats_, dim=1), dim=0)
+            X_[sample_ptr:sample_ptr + cache_size, ...] = this_q
+            y_[sample_ptr:sample_ptr + cache_size, ...] = ii
+            sample_ptr += cache_size
 
-        anchor_feature = contrast_feature
-        anchor_count = contrast_count
+        return X_, y_
 
-        anchor_dot_contrast = torch.div(torch.matmul(anchor_feature, torch.transpose(contrast_feature, 0, 1)),
+    def _contrastive(self, X_anchor, y_anchor, queue=None):
+        anchor_num, n_view = X_anchor.shape[0], X_anchor.shape[1]
+
+        y_anchor = y_anchor.contiguous().view(-1, 1)
+        anchor_count = n_view
+        anchor_feature = torch.cat(torch.unbind(X_anchor, dim=1), dim=0)
+
+        if queue is not None:
+            X_contrast, y_contrast = self._sample_negative(queue)
+            y_contrast = y_contrast.contiguous().view(-1, 1)
+            contrast_count = 1
+            contrast_feature = X_contrast
+        else:
+            y_contrast = y_anchor
+            contrast_count = n_view
+            contrast_feature = torch.cat(torch.unbind(X_anchor, dim=1), dim=0)
+
+        mask = torch.eq(y_anchor, y_contrast.T).float().cuda()
+
+        anchor_dot_contrast = torch.div(torch.matmul(anchor_feature, contrast_feature.T),
                                         self.temperature)
         logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
         logits = anchor_dot_contrast - logits_max.detach()
@@ -134,8 +143,9 @@ class PixelContrastLossOrg(nn.Module):
         neg_mask = 1 - mask
 
         logits_mask = torch.ones_like(mask).scatter_(1,
-                                                    torch.arange(anchor_num * anchor_count).view(-1, 1).cuda(),
-                                                    0)
+                                                     torch.arange(anchor_num * anchor_count).view(-1, 1).cuda(),
+                                                     0)
+
         mask = mask * logits_mask
 
         neg_logits = torch.exp(logits) * neg_mask
@@ -152,10 +162,10 @@ class PixelContrastLossOrg(nn.Module):
 
         return loss
 
-    def forward(self, feats, labels=None, predict=None):
+    def forward(self, feats, labels=None, predict=None, queue=None):
         # labels = labels.unsqueeze(1).float().clone()
         # labels = torch.nn.functional.interpolate(labels,
-        #                                         (feats.shape[2], feats.shape[3]), mode='nearest')
+        #                                          (feats.shape[2], feats.shape[3]), mode='nearest')
         # labels = labels.squeeze(1).long()
         # assert labels.shape[-1] == feats.shape[-1], '{} {}'.format(labels.shape, feats.shape)
 
@@ -166,7 +176,7 @@ class PixelContrastLossOrg(nn.Module):
         # feats = feats.permute(0, 2, 3, 1)
         # feats = feats.contiguous().view(feats.shape[0], -1, feats.shape[-1])
 
-        feats_, labels_ = self.hard_anchor_sampling(feats, labels, predict)
+        feats_, labels_ = self._hard_anchor_sampling(feats, labels, predict)
 
-        loss = self.contrastive(feats_, labels_)
+        loss = self._contrastive(feats_, labels_, queue=queue)
         return loss

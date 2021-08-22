@@ -12,7 +12,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import tqdm
-from utils import contrast_loss, lovasz_losses
+from utils import lovasz_losses
 
 from utils.metric_util import per_class_iu, fast_hist_crop
 from dataloader.pc_dataset import get_SemKITTI_label_name
@@ -31,7 +31,51 @@ warnings.filterwarnings("ignore")
 
 import wandb
 from utils.contrast_loss import PixelContrastLoss, PixelContrastLossOrg
+from utils.contrast_mem_loss import ContrastMemLoss
 
+import time
+
+def dequeue_and_enqueue(keys, labels,
+                            segment_queue, segment_queue_ptr,
+                            pixel_queue, pixel_queue_ptr):
+    # batch_size = keys.shape[0]
+    feat_dim = keys.shape[1]
+    memory_size = 3500
+    pixel_update_freq = 10
+    sample_stride = 100
+
+    # keys = keys[::sample_stride, :]
+    # labels = labels[::sample_stride, :]
+
+    # for bs in range(batch_size):
+    this_feat = keys.contiguous().permute(1,0)
+    this_label = labels.contiguous().view(-1)
+    this_label_ids = torch.unique(this_label)
+    this_label_ids = [x for x in this_label_ids if x > 0]
+
+    for lb in this_label_ids:
+        idxs = (this_label == lb).nonzero()
+
+        # segment enqueue and dequeue
+        feat = torch.mean(this_feat[:, idxs], dim=1).squeeze(1)
+        ptr = int(segment_queue_ptr[lb])
+        segment_queue[lb, ptr, :] = F.normalize(feat.view(-1), p=2, dim=0)
+        segment_queue_ptr[lb] = (segment_queue_ptr[lb] + 1) % memory_size
+
+        # pixel enqueue and dequeue
+        num_pixel = idxs.shape[0]
+        perm = torch.randperm(num_pixel)
+        K = min(num_pixel, pixel_update_freq)
+        feat = this_feat[:, perm[:K]]
+        feat = torch.transpose(feat, 0, 1)
+        ptr = int(pixel_queue_ptr[lb])
+
+        if ptr + K >= memory_size:
+            pixel_queue[lb, -K:, :] = F.normalize(feat, p=2, dim=1)
+            pixel_queue_ptr[lb] = 0
+        else:
+            pixel_queue[lb, ptr:ptr + K, :] = F.normalize(feat, p=2, dim=1)
+            pixel_queue_ptr[lb] = (pixel_queue_ptr[lb] + 1) % memory_size
 
 def main(args):
     pytorch_device = torch.device('cuda:0')
@@ -74,7 +118,7 @@ def main(args):
 
     loss_func, lovasz_softmax = loss_builder.build(wce=True, lovasz=True,
                                                    num_class=num_class, ignore_label=ignore_label)
-    contrast_loss = PixelContrastLoss()
+    contrast_loss = ContrastMemLoss()
     # contrast_loss_org = PixelContrastLossOrg()
 
     train_dataset_loader, val_dataset_loader = data_builder.build(dataset_config,
@@ -114,7 +158,7 @@ def main(args):
 
                         predict_labels = my_model(val_pt_fea_ten, val_grid_ten, val_batch_size)
 
-                        loss = lovasz_softmax(torch.nn.functional.softmax(predict_labels).detach(), val_label_tensor,
+                        loss = lovasz_softmax(F.softmax(predict_labels).detach(), val_label_tensor,
                                               ignore=0) + loss_func(predict_labels.detach(), val_label_tensor)
                         predict_labels = torch.argmax(predict_labels, dim=1)
                         predict_labels = predict_labels.cpu().detach().numpy()
@@ -161,15 +205,22 @@ def main(args):
                 dense_predictions.append(dense_prediction)
             dense_predictions = torch.cat(dense_predictions)
             point_label = torch.from_numpy(np.concatenate(point_label)).type(torch.LongTensor).to(pytorch_device).squeeze()
+            voxel_label = point_label_tensor[coords[:,0], coords[:,1], coords[:,2], coords[:,3]]
 
             loss_ce = F.cross_entropy(dense_predictions, point_label, ignore_index=0)
-            loss_lovasz = lovasz_softmax(torch.nn.functional.softmax(outputs), point_label_tensor, ignore=0)
+            loss_lovasz = lovasz_softmax(F.softmax(outputs), point_label_tensor, ignore=0)
             
-            loss_contrast = contrast_loss(features, point_label_tensor[coords[:,0], coords[:,1], coords[:,2], coords[:,3]])
+            queue = {"segment_queue": my_model.segment_queue,
+                     "pixel_queue": my_model.pixel_queue}
+            t0 = time.time()
+            loss_contrast = contrast_loss(features.unsqueeze(0), vox_predictions.unsqueeze(0), voxel_label.unsqueeze(0), queue)
+            t1 = time.time()
+            # print("contrast loss time: {}".format(t1-t0))
             # loss_contrast = contrast_loss_org(feats=features.unsqueeze(0), labels=point_label_tensor[coords[:,0], coords[:,1], coords[:,2], coords[:,3]].unsqueeze(0), predict=vox_predictions.unsqueeze(0))
-            # loss = lovasz_softmax(torch.nn.functional.softmax(outputs), point_label_tensor, ignore=0) + loss_func(
+            # loss = lovasz_softmax(torch.F.softmax(outputs), point_label_tensor, ignore=0) + loss_func(
             #     outputs, point_label_tensor)
             
+            # TODO embed coef in loss class
             loss = loss_ce + loss_lovasz + 0.1 * loss_contrast
             
             loss.backward()
@@ -179,6 +230,15 @@ def main(args):
             ce_loss_list.append(loss_ce.item())
             loss_list.append(loss.item())
 
+            # update MEM
+            t0 = time.time()
+            dequeue_and_enqueue(features.detach(), voxel_label,
+                                    segment_queue=my_model.segment_queue,
+                                    segment_queue_ptr=my_model.segment_queue_ptr,
+                                    pixel_queue=my_model.pixel_queue,
+                                    pixel_queue_ptr=my_model.pixel_queue_ptr)
+            t1 = time.time()
+            # print("dequeue time: {}".format(t1-t0))
             optimizer.zero_grad()
             pbar.update(1)
             global_iter += 1

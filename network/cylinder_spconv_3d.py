@@ -3,6 +3,7 @@
 # @file: cylinder_spconv_3d.py
 
 from torch import nn
+import torch
 
 REGISTERED_MODELS_CLASSES = {}
 
@@ -36,7 +37,8 @@ class cylinder_asym(nn.Module):
                  cylin_model,
                  segmentator_spconv,
                  sparse_shape,
-                 ):
+                 with_mem=True
+                ):
         super().__init__()
         self.name = "cylinder_asym"
 
@@ -47,6 +49,18 @@ class cylinder_asym(nn.Module):
         self.sparse_shape = sparse_shape
 
         self.proj = projection_head(128)
+        
+        if with_mem:
+            num_classes = 20
+            contrast_dim = 64
+            memory_size = 3500
+            self.register_buffer("segment_queue", torch.randn(num_classes, memory_size, contrast_dim))
+            self.segment_queue = nn.functional.normalize(self.segment_queue, p=2, dim=2)
+            self.register_buffer("segment_queue_ptr", torch.zeros(num_classes, dtype=torch.long))
+
+            self.register_buffer("pixel_queue", torch.randn(num_classes, memory_size, contrast_dim))
+            self.pixel_queue = nn.functional.normalize(self.pixel_queue, p=2, dim=2)
+            self.register_buffer("pixel_queue_ptr", torch.zeros(num_classes, dtype=torch.long))
 
     def forward(self, train_pt_fea_ten, train_vox_ten, batch_size, with_feature=False, with_coords=False):
         coords, features_3d = self.cylinder_3d_generator(train_pt_fea_ten, train_vox_ten)
