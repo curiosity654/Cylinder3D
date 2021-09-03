@@ -27,7 +27,7 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-import wandb
+# import wandb
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
@@ -95,14 +95,14 @@ def main(args):
     with torch.no_grad():
         # conf_mat = ConfusionMatrix([1, 2], [1, 2])
         for i_iter_val, (val_vox_pos, val_vox_label, val_grid, val_pt_labs, val_pt_fea) in tqdm(enumerate(
-                train_dataset_loader), total=len(train_dataset_loader)):
+                val_dataset_loader), total=len(val_dataset_loader)):
 
             val_pt_fea_ten = [torch.from_numpy(i).type(torch.FloatTensor).to(pytorch_device) for i in
                                 val_pt_fea]
             val_grid_ten = [torch.from_numpy(i).to(pytorch_device) for i in val_grid]
             val_label_tensor = val_vox_label.type(torch.LongTensor).to(pytorch_device)
 
-            predict_labels = my_model(val_pt_fea_ten, val_grid_ten, val_batch_size)
+            predict_labels, _, coords = my_model(val_pt_fea_ten, val_grid_ten, val_batch_size, with_feature=True, with_coords=True)
             # aux_loss = loss_fun(aux_outputs, point_label_tensor)
             # loss = lovasz_softmax(torch.nn.functional.softmax(predict_labels).detach(), val_label_tensor,
             #                         ignore=0) + loss_func(predict_labels.detach(), val_label_tensor)
@@ -110,30 +110,35 @@ def main(args):
             predict_labels = predict_labels.cpu().detach().numpy()
 
             for count, i_val_grid in enumerate(val_grid):
-                y_true = val_vox_label[count].numpy().flatten()
-                preds=predict_labels[count].flatten()
-                idx = y_true != 0
+                # y_true = val_vox_label[count].numpy().flatten()
+                # preds=predict_labels[count].flatten()
+                # idx = y_true != 0
                 # conf_mat = conf_mat.combine(ConfusionMatrix(y_true, preds))
                 # conf_mat = conf_mat.combine(ConfusionMatrix(y_true[idx], preds[idx]))
-                hist_list.append(fast_hist_crop(predict_labels[
-                                                    count, val_grid[count][:, 0], val_grid[count][:, 1],
-                                                    val_grid[count][:, 2]], val_pt_labs[count],
-                                                unique_label))
-                
+                # hist_list.append(fast_hist_crop(predict_labels[
+                #                                     count, val_grid[count][:, 0], val_grid[count][:, 1],
+                #                                     val_grid[count][:, 2]], val_pt_labs[count],
+                #                                 unique_label))
+                                                
+                # show(xyz[count].reshape(3,-1).transpose((1,0)),
+                #         val_pt_labs[count].flatten(), 
+                #         predict_labels[count, val_grid[count][:, 0], val_grid[count][:, 1], val_grid[count][:, 2]].flatten(),
+                #         '/root/code/Cylinder3D-dev/visualization/points/',
+                #         "{}_{}".format(i_iter_val, count))
                 show(val_vox_pos.reshape(3,-1).permute(1,0), 
                         val_vox_label[count].flatten(), 
                         predict_labels[count].flatten(),
-                        '/root/code/Cylinder3D-dev/visualization/trainset/',
+                        '/root/code/Cylinder3D-dev/visualization/contrast_mem/',
                         "{}_{}".format(i_iter_val, count))
             
             # val_loss_list.append(loss.detach().cpu().numpy())
-    iou = per_class_iu(sum(hist_list))
-    print('Validation per class iou: ')
-    for class_name, class_iou in zip(unique_label_str, iou):
-        wandb.log({"val/{}".format(class_name): class_iou}, step=0)
-        print('%s : %.2f%%' % (class_name, class_iou * 100))
-    val_miou = np.nanmean(iou) * 100
-    wandb.log({"val/miou": val_miou}, step=0)
+    # iou = per_class_iu(sum(hist_list))
+    # print('Validation per class iou: ')
+    # for class_name, class_iou in zip(unique_label_str, iou):
+    #     wandb.log({"val/{}".format(class_name): class_iou}, step=0)
+    #     print('%s : %.2f%%' % (class_name, class_iou * 100))
+    # val_miou = np.nanmean(iou) * 100
+    # wandb.log({"val/miou": val_miou}, step=0)
 
     # plt.figure(dpi=200)
     # arr = np.log10(conf_mat.to_array())
@@ -149,7 +154,7 @@ def main(args):
 
 if __name__ == '__main__':
     # Training settings
-    wandb.init(project="Cylinder3D")
+    # wandb.init(project="Cylinder3D")
     parser = argparse.ArgumentParser(description='')
     parser.add_argument('-y', '--config_path', default='config/inference.yaml')
     args = parser.parse_args()
