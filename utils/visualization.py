@@ -37,10 +37,10 @@ def show(points, gt_seg, pred_seg, out_dir, file_name, ignore_index=0):
     """
     assert out_dir is not None, 'Expect out_dir, got none.'
     points = points.numpy()
-    gt_sem_mask = gt_seg.numpy()
-    pred_sem_mask = pred_seg
-    show_seg_result(points, gt_sem_mask,
-                    pred_sem_mask, out_dir, file_name,
+    gt_seg = gt_seg.numpy()
+    pred_seg = pred_seg
+    show_seg_result(points, gt_seg,
+                    pred_seg, out_dir, file_name,
                     palette=np.array(PALETTE), ignore_index=ignore_index, norm_color=True)
 
 def show_seg_result(points,

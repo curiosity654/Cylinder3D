@@ -104,6 +104,52 @@ class SemKITTI_sk(data.Dataset):
             data_tuple += (raw_data[:, 3],)
         return data_tuple
 
+@register_dataset
+class SemKITTI_with_inst(data.Dataset):
+    def __init__(self, data_path, imageset='train',
+                 return_ref=False, label_mapping="semantic-kitti.yaml", nusc=None,
+                 load_interval=1):
+        self.return_ref = return_ref
+        with open(label_mapping, 'r') as stream:
+            semkittiyaml = yaml.safe_load(stream)
+        self.learning_map = semkittiyaml['learning_map']
+        self.imageset = imageset
+        if imageset == 'train':
+            split = semkittiyaml['split']['train']
+        elif imageset == 'val':
+            split = semkittiyaml['split']['valid']
+        elif imageset == 'test':
+            split = semkittiyaml['split']['test']
+        else:
+            raise Exception('Split must be train/val/test')
+
+        self.im_idx = []
+        for i_folder in split:
+            self.im_idx += absoluteFilePaths('/'.join([data_path, str(i_folder).zfill(2), 'velodyne']))
+        
+        self.im_idx = self.im_idx[::load_interval]
+
+    def __len__(self):
+        'Denotes the total number of samples'
+        return len(self.im_idx)
+
+    def __getitem__(self, index):
+        raw_data = np.fromfile(self.im_idx[index], dtype=np.float32).reshape((-1, 4))
+        if self.imageset == 'test':
+            annotated_data = np.expand_dims(np.zeros_like(raw_data[:, 0], dtype=int), axis=1)
+        else:
+            annotated_data = np.fromfile(self.im_idx[index].replace('velodyne', 'labels')[:-3] + 'label',
+                                         dtype=np.uint32).reshape((-1, 1))
+            inst_id = annotated_data >> 16
+            annotated_data = annotated_data & 0xFFFF  # delete high 16 digits binary
+            
+            annotated_data = np.vectorize(self.learning_map.__getitem__)(annotated_data)
+
+        data_tuple = (raw_data[:, :3], annotated_data.astype(np.uint8))
+        if self.return_ref:
+            data_tuple += (raw_data[:, 3],)
+        data_tuple += (inst_id,)
+        return data_tuple
 
 @register_dataset
 class SemKITTI_nusc(data.Dataset):
