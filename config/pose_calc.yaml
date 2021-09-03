@@ -1,0 +1,66 @@
+# Config format schema number
+format_version: 4
+
+###################
+## Model options
+model_params:
+  model_architecture: "cylinder_asym"
+
+  output_shape:
+    - 480
+    - 360
+    - 32
+
+  fea_dim: 9
+  out_fea_dim: 256
+  num_class: 20
+  num_input_features: 16
+  use_norm: True
+  init_size: 32
+
+## Dataset options
+dataset_params:
+  dataset_type: "voxel_dataset_with_inst"
+  pc_dataset_type: "SemKITTI_with_inst"
+  ignore_label: 0
+  return_test: True
+  fixed_volume_space: True
+  label_mapping: "./config/label_mapping/semantic-kitti.yaml"
+  max_volume_space:
+    - 50
+    - 50
+    - 2
+  min_volume_space:
+    - -50
+    - -50
+    - -4
+  load_interval: 1
+
+
+###################
+## Data_loader options
+train_data_loader:
+  data_path: "/root/code/Cylinder3D/data/semkitti/dataset/sequences/"
+  imageset: "train"
+  return_ref: True
+  batch_size: 1
+  shuffle: False
+  num_workers: 4
+
+val_data_loader:
+  data_path: "/root/code/Cylinder3D/data/semkitti/dataset/sequences/"
+  imageset: "train"
+  return_ref: True
+  batch_size: 1
+  shuffle: False
+  num_workers: 4
+
+###################
+## Train params
+train_params:
+  model_load_path: "./model_load_dir/epoch_19_iter_123_miou_63.929065849451796.pt"
+  model_save_path: " "
+  checkpoint_every_n_steps: 1000
+  max_num_epochs: 40
+  eval_every_n_steps: 1000
+  learning_rate: 0.001

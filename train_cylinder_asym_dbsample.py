@@ -12,13 +12,11 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 from tqdm import tqdm
-from utils import seesaw_loss
 
 from utils.metric_util import per_class_iu, fast_hist_crop
 from dataloader.pc_dataset import get_SemKITTI_label_name
 from builder import data_builder, model_builder, loss_builder
 from config.config import load_config_data
-from utils.seesaw_loss  import SeesawLoss
 
 from utils.load_save_util import load_checkpoint
 from utils.visualization import show
@@ -75,8 +73,6 @@ def main(args):
     loss_func, lovasz_softmax = loss_builder.build(wce=True, lovasz=True,
                                                    num_class=num_class, ignore_label=ignore_label)
 
-    seesaw_loss = SeesawLoss(num_classes=20, p=3, q=-1)
-
     train_dataset_loader, val_dataset_loader = data_builder.build(dataset_config,
                                                                   train_dataloader_config,
                                                                   val_dataloader_config,
@@ -93,7 +89,6 @@ def main(args):
     while epoch < train_hypers['max_num_epochs']:
         loss_list = []
         pbar = tqdm(total=len(train_dataset_loader))
-        time.sleep(10)
         # lr_scheduler.step(epoch)
         for i_iter, (_, train_vox_label, train_grid, point_label, train_pt_fea) in enumerate(train_dataset_loader):
             if global_iter % check_iter == 0:
@@ -200,7 +195,7 @@ if __name__ == '__main__':
     # Training settings
     wandb.init(project="Cylinder3D")
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('-y', '--config_path', default='config/semantickitti.yaml')
+    parser.add_argument('-y', '--config_path', default='config/semantickitti_dbsample.yaml')
     args = parser.parse_args()
 
     print(' '.join(sys.argv))
