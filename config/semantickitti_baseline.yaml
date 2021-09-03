@@ -36,7 +36,7 @@ dataset_params:
     - 0
     - -3.1415926
     - -4
-  load_interval: 10
+  load_interval: 1
 
 
 ###################
@@ -63,7 +63,7 @@ val_data_loader:
 train_params:
   model_load_path: "./model_load_dir/baseline"
   model_save_path: "./model_save_dir/baseline"
-  checkpoint_every_n_steps: 1000
+  checkpoint_every_n_steps: 2000
   max_num_epochs: 40
-  eval_every_n_steps: 1000
+  eval_every_n_steps: 2000
   learning_rate: 0.001

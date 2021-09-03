@@ -40,7 +40,7 @@ def dequeue_and_enqueue(keys, labels,
                             pixel_queue, pixel_queue_ptr):
     # batch_size = keys.shape[0]
     feat_dim = keys.shape[1]
-    memory_size = 3500
+    memory_size = 2500
     pixel_update_freq = 10
     sample_stride = 100
 
@@ -177,7 +177,7 @@ def main(args):
                     print('%s : %.2f%%' % (class_name, class_iou * 100))
                 val_miou = np.nanmean(iou) * 100
                 wandb.log({"val/miou": val_miou}, step=global_iter)
-                del val_vox_label, val_grid, val_pt_fea, val_grid_ten
+                del val_vox_label, val_grid, val_pt_fea, val_grid_ten, val_label_tensor
 
                 # save model if performance is improved
                 if best_val_miou < val_miou:

@@ -53,7 +53,7 @@ class cylinder_asym(nn.Module):
         if with_mem:
             num_classes = 20
             contrast_dim = 64
-            memory_size = 3500
+            memory_size = 2500
             self.register_buffer("segment_queue", torch.randn(num_classes, memory_size, contrast_dim))
             self.segment_queue = nn.functional.normalize(self.segment_queue, p=2, dim=2)
             self.register_buffer("segment_queue_ptr", torch.zeros(num_classes, dtype=torch.long))

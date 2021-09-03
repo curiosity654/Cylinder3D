@@ -12,3 +12,7 @@ model_load_dir
 model_save_dir
 visualization
 playground
+dbsampler/probmap.npy
+.gitignore
+dbsampler/pointmap.npy
+dbsampler/probmap.ipynb

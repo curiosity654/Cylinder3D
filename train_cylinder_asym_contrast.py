@@ -154,7 +154,7 @@ def main(args):
             # forward + backward + optimize
             outputs, features, coords = my_model(train_pt_fea_ten, train_vox_ten, train_batch_size, with_feature=True, with_coords=True)
             dense_predictions = []
-            vox_predictions = torch.argmax(outputs.permute(0,2,3,4,1)[coords[:,0], coords[:,1], coords[:,2], coords[:,3]], dim=1)
+            # vox_predictions = torch.argmax(outputs.permute(0,2,3,4,1)[coords[:,0], coords[:,1], coords[:,2], coords[:,3]], dim=1)
             for i in range(len(point_label)):
                 _outputs = outputs[i].permute(1,2,3,0)
                 dense_prediction = _outputs[train_grid[i][:, 0], train_grid[i][:, 1], train_grid[i][:, 2]]
